@@ -12,6 +12,7 @@ The online store has accumulated data on the interaction of buyers with goods fo
 
 ## Data Description:
 All data is stored in CSV files separated by ";".
+
 **interactions.csv** - the file stores data on the interaction of goods and buyers. Among the data there are "cold" goods and buyers. The row column stores the customer identifiers. In the col column are product identifiers. In the data column - the value of the interaction.
 
 Product data
