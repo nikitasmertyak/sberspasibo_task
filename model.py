@@ -9,6 +9,7 @@ import pandas as pd
 import numpy as np
 from scipy.linalg import svd
 from tqdm import tqdm_notebook
+import catboost 
 
 
 class RecommendationModel(ABC):
@@ -244,3 +245,98 @@ class CollaborativeFilteringModel(RecommendationModel):
                 prediction_user_based.append(list(recommend))
 
         self.interactions['prediction_user_based'] = prediction_user_based
+
+
+class ContentBasedRecommender(RecommendationModel):
+    """Implement an alternative approach to recommender systems - content models.
+       Each object will characterize a user-item pair and contain attributes that
+       describe both the user and the product. In addition, signs
+       can describe the whole couple itself.We will train the classifier for
+       interaction, and it needs negative examples. Let's add random missing
+       interactions as negative ones.Note that the model evaluates each pair
+       of potential interactions, which means that it is necessary to prepare
+       a sample from all possible pairs of users and articles.
+
+       Args:
+           interactions: pd.DataFrame with true_train and true_test information
+    """
+    def __init__(self, interactions) -> None:
+        
+        super().__init__()
+        self.interactions = interactions
+        self.ratings = None
+        self.X_train = None
+        self.test = None
+
+    def fit(self, train_interactions: np.ndarray, item_info_df: pd.DataFrame):
+        """Train model.
+
+        Args:
+        
+            train_interactions : ndarray
+                                 Two-dimensional numpy array, where to find user interactions with products
+
+        Returns:
+
+            self : returns an instance of self.
+        """
+        self._train_interactions = train_interactions.copy()
+        self.item_info_df = item_info_df.copy()
+        self.ratings = pd.pivot_table(
+            self._train_interactions,
+            values='result',
+            index='personId',
+            columns='contentId').fillna(0)
+
+        test_personId = np.repeat(self.interactions.index, len(self.ratings.columns)) 
+        test_contentId = list(self.ratings.columns) * len(self.interactions)
+        test = pd.DataFrame(
+            np.array([test_personId, test_contentId]).T,
+            columns=['personId', 'contentId'])
+
+        self._train_interactions = pd.concat((
+            self._train_interactions,
+            test.loc[
+                np.random.permutation(test.index)[
+            :4*len(self._train_interactions)]]), ignore_index=True)
+        self._train_interactions.result.fillna(0, inplace=True)
+
+        self._train_interactions = self._train_interactions.merge(item_info_df, how='inner', on='contentId')
+        self.X_train = self._train_interactions.drop(columns = ["personId", "contentId", "result", "sign of relation to the category"])
+        self.model = catboost.CatBoostClassifier()
+        self.model.fit(self.X_train, self._train_interactions["result"])
+
+        return self
+
+    def predict(self, k_items: int = 10):
+        """Predict k items for each user.
+
+        Args:
+        
+            k_items : int
+                      The number of predicted items per user.
+        """
+        test_personId = np.repeat(self.interactions.index, len(self.item_info_df)) 
+        test_contentId = list(self.item_info_df.contentId) * len(self.interactions)
+        test = pd.DataFrame(
+            np.array([test_personId, test_contentId]).T,
+            columns=['personId', 'contentId'])
+        test = test.merge(self.item_info_df, how='inner', on='contentId')
+
+        predictions = self.model.predict_proba(test)[:, 1]
+        test['predictions'] = predictions
+
+        test = test.sort_values('predictions', ascending=False)
+        predictions = test.groupby('personId')['contentId'].aggregate(list)
+        tmp_predictions = []
+
+        for personId in tqdm_notebook(self.interactions.index):
+            prediction = np.array(predictions.loc[personId])
+    
+            tmp_predictions.append(
+                list(prediction[~np.in1d(
+                prediction,
+                self.interactions.loc[personId, 'true_train'])])[:k_items])
+    
+        self.interactions['prediction_content'] = tmp_predictions
+        

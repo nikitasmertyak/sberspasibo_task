@@ -34,6 +34,8 @@ class RecSysData:
         interactions_df.rename(columns={'row': 'personId',
                                         'col': 'contentId',
                                         'data': 'result'}, inplace=True)
+        interactions_df.personId = interactions_df.personId.astype(str)
+        interactions_df.contentId = interactions_df.contentId.astype(str)
 
         return interactions_df
 
@@ -52,6 +54,9 @@ class RecSysData:
         item_price = item_price[['row', 'data']].rename(columns={'row': 'contentId', 'data': 'price'})
         item_subclass = item_subclass.rename(columns={'row': 'contentId', 'col': 'category number',
                                                       'data': 'sign of relation to the category'})
+        item_asset.contentId = item_asset.contentId.astype(str)
+        item_price.contentId = item_price.contentId.astype(str)
+        item_subclass.contentId = item_subclass.contentId.astype(str)
         item_asset_and_prices = item_asset.merge(item_price, on='contentId', how='inner')
         item_info_df = item_asset_and_prices.merge(item_subclass, on='contentId', how='inner')
 
@@ -69,7 +74,7 @@ class RecSysData:
         item_subclass = pd.read_csv(item_filenames[2])
 
         item_info_df = self._merge_items_data(item_asset, item_price, item_subclass)
-        item_info_df.contentId = items.contentId.astype(str)
+        #item_info_df.contentId = items.contentId.astype(str)
 
         return item_info_df
 
@@ -85,6 +90,8 @@ class RecSysData:
         user_age = user_age[['row', 'data']].rename(columns={'row': 'personId', 'data': 'age'})
         user_region = user_region.rename(columns={'row': 'personId', 'col': 'one-hot feature number of the region',
                                                   'data': 'feature_of_the_region'})
+        user_age.personId = user_age.personId.astype(str)
+        user_region.personId = user_region.personId.astype(str)
         user_info_df = user_region.merge(user_age, on='personId', how='inner')
 
         return user_info_df
@@ -113,7 +120,7 @@ class RecSysData:
         interactions_df = self.load_interactions()
         user_info_df = self._get_users_data(user_filenames)
         interactions_and_users_df = pd.merge(interactions_df, user_info_df, on='personId', how='inner')
-        interactions_and_users_df.personId = interactions_df.personId.astype(str)
-        interactions_and_users_df.contentId = interactions_df.contentId.astype(str)
+        #interactions_and_users_df.personId = interactions_df.personId.astype(str)
+        #interactions_and_users_df.contentId = interactions_df.contentId.astype(str)
 
         return interactions_and_users_df
