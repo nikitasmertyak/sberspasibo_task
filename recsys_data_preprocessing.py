@@ -57,12 +57,12 @@ class RecSysData:
         item_asset.contentId = item_asset.contentId.astype(str)
         item_price.contentId = item_price.contentId.astype(str)
         item_subclass.contentId = item_subclass.contentId.astype(str)
-        item_asset_and_prices = item_asset.merge(item_price, on='contentId', how='inner')
-        item_info_df = item_asset_and_prices.merge(item_subclass, on='contentId', how='inner')
+        item_asset_and_prices = item_asset.merge(item_price, on='contentId', how='outer')
+        item_info_df = item_asset_and_prices.merge(item_subclass, on='contentId', how='outer')
 
         return item_info_df
 
-    def _get_items_data(self, item_filenames: list):
+    def get_items_data(self, item_filenames: list):
         """
         Args:
             item_filenames: list of str (file names with item features)
@@ -74,7 +74,6 @@ class RecSysData:
         item_subclass = pd.read_csv(item_filenames[2])
 
         item_info_df = self._merge_items_data(item_asset, item_price, item_subclass)
-        #item_info_df.contentId = items.contentId.astype(str)
 
         return item_info_df
 
@@ -92,11 +91,11 @@ class RecSysData:
                                                   'data': 'feature_of_the_region'})
         user_age.personId = user_age.personId.astype(str)
         user_region.personId = user_region.personId.astype(str)
-        user_info_df = user_region.merge(user_age, on='personId', how='inner')
+        user_info_df = user_region.merge(user_age, on='personId', how='outer')
 
         return user_info_df
 
-    def _get_users_data(self, user_filenames: list) -> pd.DataFrame:
+    def get_users_data(self, user_filenames: list) -> pd.DataFrame:
         """
         Args:
             user_filenames: list of str (file names with user features)
@@ -118,9 +117,7 @@ class RecSysData:
             interactions_and_users_df
         """
         interactions_df = self.load_interactions()
-        user_info_df = self._get_users_data(user_filenames)
-        interactions_and_users_df = pd.merge(interactions_df, user_info_df, on='personId', how='inner')
-        #interactions_and_users_df.personId = interactions_df.personId.astype(str)
-        #interactions_and_users_df.contentId = interactions_df.contentId.astype(str)
+        user_info_df = self.get_users_data(user_filenames)
+        interactions_and_users_df = pd.merge(interactions_df, user_info_df, on='personId', how='left')
 
         return interactions_and_users_df
