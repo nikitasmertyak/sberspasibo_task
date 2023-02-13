@@ -9,7 +9,9 @@ import pandas as pd
 import numpy as np
 from scipy.linalg import svd
 from tqdm import tqdm_notebook
-import catboost 
+from prepare_data import create_matrix_ratings
+import catboost
+from pyfm import pylibfm
 
 
 class RecommendationModel(ABC):
@@ -17,7 +19,6 @@ class RecommendationModel(ABC):
 
     @abstractmethod
     def __init__(self):
-
         self._train_interactions: Optional[np.ndarray] = None
 
     @abstractmethod
@@ -40,21 +41,20 @@ class Baseline(RecommendationModel):
        recommends the most popular items.
 
        Args:
-           interactions: pd.DataFrame with true_train and true_test information
+           interactions: Two-dimensional data structure with labeled axes.
     """
+
     def __init__(self, interactions) -> None:
-        
         super().__init__()
         self.interactions = interactions
         self.popular_content = None
 
-    def fit(self, train_interactions: np.ndarray):
+    def fit(self, train_interactions: pd.DataFrame):
         """Train model.
 
         Args:
         
-            train_interactions : ndarray
-                                 Two-dimensional numpy array, where to find user interactions with products
+            train_interactions : DataFrame, where to find user interactions with products
 
         Returns:
 
@@ -82,7 +82,7 @@ class Baseline(RecommendationModel):
             self.interactions.true_train
             .apply(
                 lambda x:
-                    self.popular_content[~np.in1d(self.popular_content, x)][:k_items]
+                self.popular_content[~np.in1d(self.popular_content, x)][:k_items]
             )
         )
 
@@ -94,8 +94,9 @@ class SVDModel(RecommendationModel):
     
         k : int, default=100
             The number of singular values and vectors to compute.
-        interactions: pd.DataFrame with true_train and true_test information
+        interactions: Two-dimensional data structure with labeled axes.
     """
+
     def __init__(self, interactions, k: int = 100) -> None:
 
         if k <= 0:
@@ -109,13 +110,12 @@ class SVDModel(RecommendationModel):
         self.ratings: Optional[np.ndarray] = None
         self.interactions = interactions
 
-    def fit(self, train_interactions: np.ndarray):
+    def fit(self, train_interactions: pd.DataFrame):
         """Train model.
 
         Args:
         
-            train_interactions : ndarray
-                                 Two-dimensional numpy array, where to find user interactions with products
+            train_interactions : DataFrame, contains user interactions with products
 
         Returns:
 
@@ -129,7 +129,7 @@ class SVDModel(RecommendationModel):
             index='personId',
             columns='contentId').fillna(0)
         self.U, self.sigma, self.V = svd(self.ratings)
-        
+
         return self
 
     def predict(self, k_items: int = 10):
@@ -153,7 +153,7 @@ class SVDModel(RecommendationModel):
                 .sort_values(ascending=False)
                 .index.values
             )
-    
+
             predictions.append(
                 list(prediction[~np.in1d(
                     prediction,
@@ -169,24 +169,25 @@ class CollaborativeFilteringModel(RecommendationModel):
 
        Args:
          alpha: measure of user similarity
-         interactions: pd.DataFrame with true_train and true_test information
+         interactions: Two-dimensional data structure with labeled axes.
     """
-    def __init__(self, interactions: pd.DataFrame, alpha :int = 0) -> None:
-        
+
+    def __init__(self, interactions: pd.DataFrame, alpha: int = 0) -> None:
+
         super().__init__()
         self.interactions = interactions
         self.similarity_users = None
         self.ratings_m = None
         self.ratings: Optional[np.ndarray] = None
         self.alpha = alpha
-        
-    def fit(self, train_interactions: np.ndarray):
+
+    def fit(self, train_interactions: pd.DataFrame):
         """Train model.
 
         Args:
         
-            train_interactions : ndarray
-                                 Two-dimensional numpy array, where to find user interactions with products
+            train_interactions : DataFrame
+                                User interactions with products for training
 
         Returns:
 
@@ -194,35 +195,31 @@ class CollaborativeFilteringModel(RecommendationModel):
         """
 
         self._train_interactions = train_interactions.copy()
-        self.ratings = pd.pivot_table(
-            self._train_interactions,
-            values='result',
-            index='personId',
-            columns='contentId').fillna(0)
+        self.ratings = create_matrix_ratings(self._train_interactions)
         self.ratings_m = self.ratings.values
-        self.similarity_users = np.zeros((len(self.ratings_m ), len(self.ratings_m)))
+        self.similarity_users = np.zeros((len(self.ratings_m), len(self.ratings_m)))
 
-        for i in tqdm_notebook(range(len(self.ratings_m)-1)):
-            for j in range(i+1, len(self.ratings_m)):
-        
+        for i in tqdm_notebook(range(len(self.ratings_m) - 1)):
+            for j in range(i + 1, len(self.ratings_m)):
+
                 # nonzero elements of two users
                 mask_uv = (self.ratings_m[i] != 0) & (self.ratings_m[j] != 0)
-        
+
                 # continue if no intersection
                 if np.sum(mask_uv) == 0:
                     continue
-            
+
                 # get nonzero elements
                 ratings_v = self.ratings_m[i, mask_uv]
                 ratings_u = self.ratings_m[j, mask_uv]
-        
+
                 # for nonzero std
                 if len(np.unique(ratings_v)) < 2 or len(np.unique(ratings_u)) < 2:
                     continue
-       
-                self.similarity_users[i,j] = np.corrcoef(ratings_v, ratings_u)[0, 1]
-                self.similarity_users[j,i] = self.similarity_users[i,j]
-        
+
+                self.similarity_users[i, j] = np.corrcoef(ratings_v, ratings_u)[0, 1]
+                self.similarity_users[j, i] = self.similarity_users[i, j]
+
         return self
 
     def predict(self, k_items: int = 10):
@@ -257,72 +254,44 @@ class ContentBasedRecommender(RecommendationModel):
        of potential interactions, which means that it is necessary to prepare
        a sample from all possible pairs of users and articles.
 
-       Args:
-           interactions: pd.DataFrame with true_train and true_test information
+    Args:
+           interactions: Two-dimensional data structure with labeled axes.
     """
-    def __init__(self, interactions) -> None:
-        
+
+    def __init__(self, interactions: pd.DataFrame) -> None:
         super().__init__()
         self.interactions = interactions
-        self.ratings = None
-        self.X_train = None
-        self.test = None
+        self.model = None
 
-    def fit(self, train_interactions: np.ndarray, item_info_df: pd.DataFrame):
+    def fit(self, X_train: pd.DataFrame, y_train: np.array):
         """Train model.
 
         Args:
         
-            train_interactions : ndarray
-                                 Two-dimensional numpy array, where to find user interactions with products
+            X_train : DataFrame
+                      Contains user item features
+            y_train : array
+                      Contains target value
 
         Returns:
 
             self : returns an instance of self.
         """
-        self._train_interactions = train_interactions.copy()
-        self.item_info_df = item_info_df.copy()
-        self.ratings = pd.pivot_table(
-            self._train_interactions,
-            values='result',
-            index='personId',
-            columns='contentId').fillna(0)
-
-        test_personId = np.repeat(self.interactions.index, len(self.ratings.columns)) 
-        test_contentId = list(self.ratings.columns) * len(self.interactions)
-        test = pd.DataFrame(
-            np.array([test_personId, test_contentId]).T,
-            columns=['personId', 'contentId'])
-
-        self._train_interactions = pd.concat((
-            self._train_interactions,
-            test.loc[
-                np.random.permutation(test.index)[
-            :4*len(self._train_interactions)]]), ignore_index=True)
-        self._train_interactions.result.fillna(0, inplace=True)
-
-        self._train_interactions = self._train_interactions.merge(item_info_df, how='inner', on='contentId')
-        self.X_train = self._train_interactions.drop(columns = ["personId", "contentId", "result", "sign of relation to the category"])
         self.model = catboost.CatBoostClassifier()
-        self.model.fit(self.X_train, self._train_interactions["result"])
+        self.model.fit(X_train, y_train)
 
         return self
 
-    def predict(self, k_items: int = 10):
+    def predict(self, test: pd.DataFrame, k_items: int = 10):
         """Predict k items for each user.
 
         Args:
-        
+
+            test: DataFrame
+                  Using for test the model
             k_items : int
                       The number of predicted items per user.
         """
-        test_personId = np.repeat(self.interactions.index, len(self.item_info_df)) 
-        test_contentId = list(self.item_info_df.contentId) * len(self.interactions)
-        test = pd.DataFrame(
-            np.array([test_personId, test_contentId]).T,
-            columns=['personId', 'contentId'])
-        test = test.merge(self.item_info_df, how='inner', on='contentId')
-
         predictions = self.model.predict_proba(test)[:, 1]
         test['predictions'] = predictions
 
@@ -332,11 +301,73 @@ class ContentBasedRecommender(RecommendationModel):
 
         for personId in tqdm_notebook(self.interactions.index):
             prediction = np.array(predictions.loc[personId])
-    
+
             tmp_predictions.append(
                 list(prediction[~np.in1d(
-                prediction,
-                self.interactions.loc[personId, 'true_train'])])[:k_items])
-    
+                    prediction,
+                    self.interactions.loc[personId, 'true_train'])])[:k_items])
+
         self.interactions['prediction_content'] = tmp_predictions
+
+
+class FactorizationMachines(RecommendationModel):
+    """ The generalization of matrix decompositions — factorization machines
+        that can work with content information.
+
+    Args:
+           interactions: pd.DataFrame with true_train and true_test information
+           hidden_view_size: int Hidden view size
+           num_iter: int count of iterations
+    """
+
+    def __init__(self, interactions: pd.DataFrame,
+                 hidden_view_size: int = 10, num_iter: int = 30) -> None:
+        super().__init__()
+        self.interactions = interactions
+        self.hidden_view_size = hidden_view_size
+        self.num_iter = num_iter
+        self.fm = None
+        self.ratings = None
+
+    def fit(self, train_features: pd.DataFrame, y_train: np.array, train_interactions):
+        """Train model.
+
+        Args:
         
+            train_features : DataFrame
+                      Contains user - item features
+            y_train: array
+                    target for training
+            train_interactions:
+
+        Returns:
+
+            self : returns an instance of self.
+        """
+        self.ratings = create_matrix_ratings(train_interactions)
+        self.fm = pylibfm.FM(num_factors=self.hidden_view_size, num_iter=self.num_iter, task='regression')
+        self.fm.fit(train_features, y_train)
+
+        return self
+
+    def predict(self, test_features: pd.DataFrame, k_items: int = 10):
+        """Predict k items for each user.
+
+        Args:
+
+            test_features: DataFrame
+                  Using for test the model
+            k_items : int
+                      The number of predicted items per user.
+        """
+        y_predict = self.fm.predict(test_features)
+        predictions = []
+        new_ratings = y_predict.reshape(self.ratings.shape)
+
+        for i, person in enumerate(self.interactions.index):
+            user_prediction = self.ratings.columns[np.argsort(new_ratings[i])[::-1]]
+            predictions.append(
+                user_prediction[~np.in1d(user_prediction,
+                                         self.interactions.loc[person, 'true_train'])][:k_items])
+
+        self.interactions['fm_prediction'] = predictions
