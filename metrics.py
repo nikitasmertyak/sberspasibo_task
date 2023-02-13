@@ -2,15 +2,17 @@
 Model evaluation functions.
 """
 
-def calc_metrics(column, interactions):
+import pandas as pd
+
+
+def calc_metrics(column: str, interactions: pd.DataFrame) -> float:
     """
     Calculating the quality of the model
 
     Args:
         column : str
                  Name of the using model 
-        interactions: pd.DataFrame
-                 DataFrame with true_train and true_test information 
+        interactions: DataFrame with true_train and true_test information
     Returns
          Mean Average Precision score.
     """
